@@ -81,20 +81,20 @@
 
   // ---------- 로그인 / 상점 / 도구 ----------
   const ITEMS = {
-    longsword: { name: '장검', cost: 200, slots: 2, range: 0.25, color: '#bcd2ff',
-                 desc: '사거리 25% 증가 · 2칸' },
-    magicbook: { name: '마법서', cost: 300, slots: 1, specialMul: 0.2, color: '#b072ff',
-                 desc: '특수공격 데미지 +20% · 1칸' },
-    smoke:     { name: '연막탄', cost: 500, slots: 2, dashInvuln: true, color: '#9aa3b0',
-                 desc: '대쉬 중 무적 · 2칸' },
+    longsword: { name: '장검', cost: 200, slots: 2, range: 0.40, color: '#bcd2ff',
+                 desc: '사거리 40% 증가 · 2칸' },
+    magicbook: { name: '마법서', cost: 300, slots: 1, specialMul: 0.25, color: '#b072ff',
+                 desc: '특수공격 데미지 +25% · 1칸' },
+    smoke:     { name: '연막탄', cost: 500, slots: 3, dashInvuln: true, color: '#9aa3b0',
+                 desc: '대쉬 중 무적 · 3칸' },
     heart:     { name: '하트 펜던트', cost: 250, slots: 1, hp: 1, color: '#ff6b8e',
                  desc: '체력 +1 · 1칸' },
-    stretch:   { name: '살아나는 기지개', cost: 600, slots: 3, hp: 2, color: '#ffd24a',
-                 desc: '체력 +2 · 3칸' },
+    stretch:   { name: '살아나는 기지개', cost: 600, slots: 3, hp: 4, color: '#ffd24a',
+                 desc: '체력 +4 · 3칸' },
   };
   let currentUser = null, profile = null;
   let drag = null, dragX = 0, dragY = 0;   // 드래그앤드롭 상태
-  function defaultProfile() { return { gold: 0, owned: {}, equipped: [], slots: 3 }; }
+  function defaultProfile() { return { gold: 0, owned: {}, equipped: [], slots: 3, slotCost: 200 }; }
   function loadProfile(name) {
     let p;
     try { const raw = localStorage.getItem('songdih_user_' + name); p = raw ? JSON.parse(raw) : defaultProfile(); }
@@ -102,9 +102,11 @@
     if (!p.owned) p.owned = {};
     if (!Array.isArray(p.equipped)) p.equipped = [];
     if (!p.slots) p.slots = 3;
+    if (!p.slotCost) p.slotCost = 200;
     if (typeof p.gold !== 'number') p.gold = 0;
     profile = p; currentUser = name;
     try { localStorage.setItem('songdih_lastuser', name); } catch (e) {}
+    saveProfile();   // 정규화된 상태 즉시 저장
   }
   function saveProfile() {
     if (!currentUser) return;
@@ -133,6 +135,7 @@
   // 초기 로딩: 마지막 유저 자동 로그인, 없으면 게스트
   try { const last = localStorage.getItem('songdih_lastuser'); if (last) loadProfile(last); } catch (e) {}
   if (!profile) profile = defaultProfile();
+  window.addEventListener('beforeunload', saveProfile);   // 종료 시 확실히 저장
 
   // ---------- 게임 상태 ----------
   let state = 'MENU';            // MENU | INTRO | PLAY | WIN | LOSE
@@ -163,9 +166,11 @@
   let noteLaser = null;          // Hansubal 음표 레이저
   let mapAtk = 0;                // 맵 전체공격 플래시
   let clockWarns = [];           // 67시계: 플레이어 위치 경고/폭발
+  let hanRage = null;            // Hansubal 2페이즈 연출
   let skipHold = 0;              // 컷씬 스킵: 스페이스 홀드 프레임
   let upgrade = null;            // 보스 클리어 강화 선택 { next }
-  const CUTSCENES = ['INTRO','ENRAGE','BOSSDIE','INTRO2','SKIRRRAGE','SKIRRREVIVE','INTRO3'];
+  let cheatBuf = '';             // 메인화면 치트 입력
+  const CUTSCENES = ['INTRO','ENRAGE','BOSSDIE','INTRO2','SKIRRRAGE','SKIRRREVIVE','INTRO3','HANRAGE'];
 
   // ---------- 엔티티 ----------
   let player, boss, burps, fartZones, particles, laser, floatTexts;
@@ -203,7 +208,7 @@
     platforms = [];
     intro2 = null; intro3 = null;
     waves = []; bullets = []; neonSquares = []; neonWall = null; micProjs = []; skirrRage = null; skirrRevive = null; redBlocks = []; redTimer = 0; pShots = [];
-    laughs = []; notes = []; noteLaser = null; mapAtk = 0; clockWarns = [];
+    laughs = []; notes = []; noteLaser = null; mapAtk = 0; clockWarns = []; hanRage = null;
     burps = [];
     fartZones = [];             // [{ x, w, life, max }]
     laser = null;               // { y, h, dir, life, hit }
@@ -1342,6 +1347,7 @@
   function equipBtn() { return { x: W/2 + 10,  y: 392, w: 190, h: 44 }; }
   function loginBtn() { return { x: W - 154, y: 14, w: 140, h: 30 }; }
   function backBtn()  { return { x: 24, y: H - 56, w: 130, h: 40 }; }
+  function backBtn2() { return { x: W/2 - 90, y: 330, w: 180, h: 52 }; }
   function buyBtn()   { return { x: W/2 - 80, y: 300, w: 160, h: 44 }; }
   function schemeChip(i) { return { x: W/2 + (i === 0 ? -200 : 14), y: 232, w: 186, h: 60 }; }
   function drawWoodButton(btn, label) {
@@ -1421,7 +1427,8 @@
 
   // ---------- 상점 ----------
   const SHOP_IDS = ['longsword', 'magicbook', 'heart', 'smoke', 'stretch'];
-  function shopRowRect(i) { return { x: 140, y: 120 + i*70, w: W - 280, h: 60 }; }
+  function shopRowRect(i) { return { x: 140, y: 100 + i*62, w: W - 280, h: 54 }; }
+  function slotRowIndex() { return SHOP_IDS.length; }   // 칸 추가 행
   function shopBuyRect(i) { const r = shopRowRect(i); return { x: r.x + r.w - 110, y: r.y + 12, w: 92, h: 36 }; }
   function drawShop() {
     drawBackground();
@@ -1445,7 +1452,22 @@
       const can = currentUser && profile.gold >= it.cost;
       drawPlainButton(shopBuyRect(i), '구매', can ? '#2f7a3a' : '#555');
     }
-    if (!currentUser) { ctx.textAlign = 'center'; ctx.fillStyle = '#ff9a9a'; ctx.font = '14px "Trebuchet MS"'; ctx.fillText('구매하려면 로그인하세요', W/2, H - 28); }
+    // 칸 추가 행
+    {
+      const r = shopRowRect(slotRowIndex());
+      ctx.fillStyle = '#241c40'; roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = '#ffd24a'; roundRect(r.x, r.y, r.w, r.h, 10); ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
+      ctx.fillText('🎒 도구 칸 추가', r.x + 20, r.y + 26);
+      ctx.fillStyle = '#aab4d4'; ctx.font = '13px "Trebuchet MS", sans-serif';
+      ctx.fillText('장착 칸 +1  (현재 ' + profile.slots + '칸)', r.x + 20, r.y + 46);
+      ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 16px "Trebuchet MS", sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(profile.slotCost + ' G', r.x + r.w - 122, r.y + 34);
+      const canS = currentUser && profile.gold >= profile.slotCost;
+      drawPlainButton(shopBuyRect(slotRowIndex()), '구매', canS ? '#2f7a3a' : '#555');
+    }
+    if (!currentUser) { ctx.textAlign = 'center'; ctx.fillStyle = '#ff9a9a'; ctx.font = '14px "Trebuchet MS"'; ctx.fillText('구매하려면 로그인하세요', W/2, H - 24); }
     drawPlainButton(backBtn(), '← 뒤로', '#5a4030');
     ctx.textAlign = 'left';
   }
@@ -1459,7 +1481,7 @@
   }
 
   // ---------- 도구 장착 ----------
-  function slotRect(i) { const sw = 110, gap = 16, x0 = W/2 - (sw*3 + gap*2)/2; return { x: x0 + i*(sw+gap), y: 130, w: sw, h: 110 }; }
+  function slotRect(i) { const n = profile.slots, sw = Math.min(110, (W-120)/n - 14), gap = 14, x0 = W/2 - (sw*n + gap*(n-1))/2; return { x: x0 + i*(sw+gap), y: 130, w: sw, h: 110 }; }
   function invRect(i) { const iw = 100, gap = 14, perRow = 6, x0 = W/2 - (iw*perRow + gap*(perRow-1))/2; const r = Math.floor(i/perRow), c = i%perRow; return { x: x0 + c*(iw+gap), y: 320 + r*100, w: iw, h: 88 }; }
   function invList() {  // 인벤토리(장착 안 한 보유분)
     const list = [];
@@ -1543,13 +1565,17 @@
   function drawEnd(win) {
     ctx.textAlign = 'center';
     if (win) {
-      // 평범한 클리어 화면
+      // 최종 클리어 화면
       ctx.fillStyle = '#e9e1cc';
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#2c2230';
-      ctx.font = 'bold 72px "Trebuchet MS", sans-serif';
-      ctx.fillText('Ssunang clear', W/2, 230);
-      drawWoodButton(startBtn(), '다시 하기');
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 80px "Trebuchet MS", sans-serif';
+      ctx.fillText('클리어!', W/2 - 30, 220);
+      ctx.fillStyle = '#8a7a66';
+      ctx.font = 'italic 22px "Trebuchet MS", sans-serif';
+      ctx.fillText('아직은..', W/2 + 150, 248);
+      drawPlainButton(backBtn2(), '돌아가기', '#5a4030');
     } else {
       // 검은 화면 + 재시도
       ctx.fillStyle = '#000';
@@ -1592,6 +1618,15 @@
           return;
         }
       }
+      if (inRect(mx, my, shopBuyRect(slotRowIndex()))) {   // 칸 추가
+        if (currentUser && profile.gold >= profile.slotCost) {
+          profile.gold -= profile.slotCost;
+          profile.slots += 1;
+          profile.slotCost *= 2;   // 살 때마다 2배
+          saveProfile();
+        }
+        return;
+      }
       return;
     }
     if (state === 'EQUIP') {
@@ -1599,14 +1634,14 @@
       if (inRect(mx, my, backBtn())) { state = 'MENU'; return; }
       return;
     }
+    if (state === 'WIN') { if (inRect(mx, my, backBtn2())) state = 'MENU'; return; }
     if (state === 'MENU') {
       for (let i = 0; i < 2; i++) if (inRect(mx, my, schemeChip(i))) { controlScheme = i+1; return; }
       if (inRect(mx, my, loginBtn())) { doLogin(); return; }
       if (inRect(mx, my, shopBtn())) { state = 'SHOP'; return; }
       if (inRect(mx, my, equipBtn())) { state = 'EQUIP'; return; }
+      if (inRect(mx, my, startBtn())) { startIntro(); return; }
     }
-    const btn = startBtn();
-    if (inRect(mx, my, btn) && (state === 'MENU' || state === 'WIN')) { startIntro(); }
   });
 
   // ---------- 도구 장착 드래그앤드롭 ----------
@@ -2670,9 +2705,12 @@
 
   // ----- Hansubal AI -----
   function hPlatTop(i) { return platforms[i].y - boss.h; }
-  function hSwitchFloor() {
-    boss.floor ^= 1;
-    boss.y = hPlatTop(boss.floor);
+  function hNextPlat() {
+    boss.platIdx = (boss.platIdx + 1) % platforms.length;
+    const pf = platforms[boss.platIdx];
+    boss.y = pf.y - boss.h;
+    boss.x = clamp(boss.x, pf.x, pf.x + pf.w - boss.w);
+    boss.dir *= -1;
     spawnParticles(boss.x + boss.w/2, boss.y + boss.h, '#9be84a', 8, 5);
     shakeAmt = Math.max(shakeAmt, 4);
   }
@@ -2687,8 +2725,8 @@
     const base = Math.atan2((player.y+player.h/2) - my, (player.x+player.w/2) - mx);
     for (let k = 0; k <= intensity; k++) {
       const ang = base + rand(-0.45, 0.45);
-      const sp = 3.5 + intensity * 1.9;
-      laughs.push({ x: mx, y: my, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp, life: 130, size: 13 + intensity*4 });
+      const sp = 2.4 + intensity * 1.05;     // 속도↓
+      laughs.push({ x: mx, y: my, vx: Math.cos(ang)*sp, vy: Math.sin(ang)*sp, life: 150, size: 10 + intensity*2.5 });  // 크기↓
     }
   }
   function fireNote() {
@@ -2708,10 +2746,10 @@
     boss.facing = (player.x+player.w/2 < boss.x+boss.w/2) ? -1 : 1;
     switch (boss.state) {
       case 'patrol': {                  // 발판 위아래 훑기
-        const pf = platforms[boss.floor];
-        boss.x += boss.dir * 2.4;
-        if (boss.x <= pf.x) { boss.x = pf.x; boss.dir = 1; hSwitchFloor(); }
-        else if (boss.x + boss.w >= pf.x + pf.w) { boss.x = pf.x + pf.w - boss.w; boss.dir = -1; hSwitchFloor(); }
+        const pf = platforms[boss.platIdx];
+        boss.x += boss.dir * (boss.phase2 ? 3.4 : 2.4);
+        if (boss.x <= pf.x) { boss.x = pf.x; hNextPlat(); }
+        else if (boss.x + boss.w >= pf.x + pf.w) { boss.x = pf.x + pf.w - boss.w; hNextPlat(); }
         boss.timer--;
         if (boss.timer <= 0) hPickPattern();
         break;
@@ -2748,7 +2786,7 @@
         break;
       }
       case 'p2_move': {                 // 윗 발판 가운데로
-        boss.floor = 0;
+        boss.platIdx = 0;
         const tx = platforms[0].x + platforms[0].w/2 - boss.w/2, ty = hPlatTop(0);
         boss.x += (tx - boss.x) * 0.12; boss.y += (ty - boss.y) * 0.2;
         if (Math.abs(tx - boss.x) < 6) {
@@ -2771,10 +2809,10 @@
       case 'p3_notes': {                // 나무 변신, 천천히 접근 + 음표 발사 (3초)
         boss.tree = true;
         const dir = (player.x+player.w/2 < boss.x+boss.w/2) ? -1 : 1;
-        const pf = platforms[boss.floor];
+        const pf = platforms[boss.platIdx];
         boss.x = clamp(boss.x + dir*0.8, pf.x, pf.x + pf.w - boss.w);
         boss.subTimer--;
-        if (boss.subTimer <= 0) { fireNote(); fireNote(); boss.subTimer = 16; }
+        if (boss.subTimer <= 0) { fireNote(); boss.subTimer = boss.phase2 ? 20 : 28; }   // 발사량↓
         boss.timer--;
         if (boss.timer <= 0) {
           // 기 모으기 시작 시점에 조준 고정 (이후엔 추적 안 함 → 회피 가능)
@@ -2805,6 +2843,69 @@
       }
     }
     if (rectsOverlap(boss, player)) damagePlayer();   // 본체 접촉 피해
+  }
+
+  // ----- Hansubal 2페이즈 연출 -----
+  function hanSplitAndResume() {
+    platforms = [
+      { x: 60,  y: 250, w: 360 }, { x: 540, y: 250, w: 360 },   // 윗 발판 2조각
+      { x: 60,  y: 400, w: 360 }, { x: 540, y: 400, w: 360 },   // 아랫 발판 2조각
+    ];
+    boss.x = 60 + 180 - boss.w/2; boss.y = 250 - boss.h; boss.vy = 0;
+    spawnParticles(boss.x + boss.w/2, 250, '#7fe3ff', 30, 10);
+    shakeAmt = Math.max(shakeAmt, 34);
+    hanRage = null; state = 'PLAY';
+    boss.state = 'patrol'; boss.timer = 80; boss.platIdx = 0; boss.dir = -1;
+    boss.tree = false; boss.watch = false; boss.laughScale = 1;
+    player.invuln = 40; hitStop = 0;
+  }
+  function startHanRage() {
+    boss.phase2 = true; boss.mech = true; boss.vy = 0;
+    laughs = []; notes = []; noteLaser = null; clockWarns = []; mapAtk = 0;
+    boss.watch = false; boss.tree = false;
+    hanRage = { phase: 1, timer: 0, shake: 18 };
+    state = 'HANRAGE';
+  }
+  function updateHanRage() {
+    const e = hanRage;
+    if (e.shake > 0.5) e.shake *= 0.9; else e.shake = 0;
+    if (e.phase === 1) {              // 몸 전체 기계화
+      e.timer++;
+      if (e.timer % 4 === 0) spawnParticles(boss.x + boss.w/2 + rand(-22,22), boss.y + rand(20,110), '#7fe3ff', 2, 4);
+      if (e.timer >= 64) { e.phase = 2; e.timer = 0; boss.vy = -23; e.shake = 16; }
+    } else if (e.phase === 2) {       // 화면 밖으로 점프
+      boss.vy += 0.6; boss.y += boss.vy;
+      if (boss.y < -220) { e.phase = 3; e.timer = 0; }
+    } else if (e.phase === 3) {       // 2초 후 착지 + 플랫폼 4분할
+      e.timer++;
+      if (e.timer >= 120) hanSplitAndResume();
+    }
+    for (const p of particles) { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; }
+    particles = particles.filter(p => p.life > 0);
+  }
+  function drawHanRage() {
+    if (!hanRage) return;
+    const e = hanRage;
+    ctx.save();
+    if (e.shake > 0) ctx.translate((Math.random()-0.5)*e.shake, (Math.random()-0.5)*e.shake);
+    drawNoiseBackground();
+    drawBossHansubal();
+    drawPlayer();
+    drawProjectiles();
+    ctx.restore();
+    if (e.phase === 1) {
+      ctx.textAlign = 'center';
+      ctx.save(); ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 22;
+      ctx.fillStyle = '#bfeaff'; ctx.font = 'bold 40px "Trebuchet MS", sans-serif';
+      ctx.fillText('MECHANIZED', W/2, 110);
+      ctx.restore(); ctx.textAlign = 'left';
+    } else if (e.phase === 3) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(127,227,255,' + (0.4 + 0.3*Math.abs(Math.sin(frame*0.2))) + ')';
+      ctx.font = 'bold 26px "Trebuchet MS", sans-serif';
+      ctx.fillText('!! 착지 경고 !!', W/2, 90);
+      ctx.textAlign = 'left';
+    }
   }
 
   function drawNoiseBackground() {
@@ -2870,10 +2971,14 @@
     ctx.fillStyle = '#5a6472'; ctx.fillRect(b.x+b.w-22, top+b.h-18, 14, 5);
     ctx.lineWidth = 2; ctx.strokeStyle = '#0c1014'; ctx.strokeRect(b.x+b.w-22, top+b.h-30, 14, 30);
     ctx.fillStyle = '#7fe3ff'; ctx.fillRect(b.x+b.w-18, top+b.h-28, 4, 4);
-    // 몸 (초록 옷)
-    ctx.fillStyle = b.flash > 0 ? '#fff' : '#2e8b57';
+    // 몸 (초록 옷 / 2페 기계화)
+    ctx.fillStyle = b.flash > 0 ? '#fff' : (b.mech ? '#8a93a5' : '#2e8b57');
     ctx.fillRect(b.x, top+44, b.w, b.h-44-26);
-    ctx.lineWidth = 3; ctx.strokeStyle = '#0c2a18'; ctx.strokeRect(b.x, top+44, b.w, b.h-44-26);
+    ctx.lineWidth = 3; ctx.strokeStyle = b.mech ? '#2a3340' : '#0c2a18'; ctx.strokeRect(b.x, top+44, b.w, b.h-44-26);
+    if (b.mech) {   // 볼트 + 코어
+      ctx.fillStyle = '#5a6472'; ctx.fillRect(b.x+5, top+50, 5, 5); ctx.fillRect(b.x+b.w-10, top+50, 5, 5);
+      ctx.fillStyle = '#7fe3ff'; ctx.beginPath(); ctx.arc(b.x+b.w/2, top+64, 5, 0, Math.PI*2); ctx.fill();
+    }
     // 머리
     ctx.fillStyle = b.flash > 0 ? '#fff' : '#ffd0a8';
     ctx.beginPath(); ctx.arc(cx, top+30, 20, 0, Math.PI*2); ctx.fill();
@@ -2903,7 +3008,7 @@
     player.x = 120; player.y = 400 - player.h; player.vy = 0; player.onGround = true;
     player.invuln = 30; player.castTimer = 0; player.stunTimer = 0; player.kbx = 0; player.dashTimer = 0; player.dropTimer = 0;
     burps=[]; fartZones=[]; laser=null; particles=[]; floatTexts=[]; waves=[]; bullets=[]; neonSquares=[]; neonWall=null; micProjs=[]; redBlocks=[]; pShots=[];
-    laughs=[]; notes=[]; noteLaser=null; mapAtk=0; clockWarns=[];
+    laughs=[]; notes=[]; noteLaser=null; mapAtk=0; clockWarns=[]; hanRage=null;
     boss = {
       type: 'hansubal',
       x: 452, y: -200, w: 56, h: 130,
@@ -2911,7 +3016,8 @@
       state: 'idle', timer: 0,
       sub: 0, subTimer: 0, swingTimer: 0, swingHit: false, stun: 0, enraged: false, roar: false, vy: 0,
       flash: 0, bob: 0, facing: -1,
-      floor: 0, dir: -1, watch: false, tree: false, laughScale: 1, dmgHp: 0,
+      platIdx: 0, dir: -1, watch: false, tree: false, laughScale: 1, dmgHp: 0,
+      phase2: false, mech: false,
     };
     startIntro3();
   }
@@ -2957,7 +3063,7 @@
       case 4: {  // 확대 + 타이틀
         e.timer++;
         e.p = Math.min(1, e.timer / 40);
-        if (e.timer >= 150) { intro3 = null; state = 'PLAY'; boss.state = 'patrol'; boss.timer = 120; boss.floor = 0; boss.dir = -1; player.invuln = 40; hitStop = 0; }
+        if (e.timer >= 150) { intro3 = null; state = 'PLAY'; boss.state = 'patrol'; boss.timer = 120; boss.platIdx = 0; boss.dir = -1; player.invuln = 40; hitStop = 0; }
         break;
       }
     }
@@ -3021,8 +3127,10 @@
       const ry = reviveRestY(); boss.y = ry - boss.h;
       state = 'PLAY'; boss.state = 'stand'; boss.timer = 50; boss.patrolCount = 0; player.invuln = 40; hitStop = 0;
     } else if (state === 'INTRO3') {
-      intro3 = null; boss.y = 120; boss.vy = 0; boss.state = 'patrol'; boss.timer = 120; boss.floor = 0; boss.dir = -1;
+      intro3 = null; boss.y = 120; boss.vy = 0; boss.state = 'patrol'; boss.timer = 120; boss.platIdx = 0; boss.dir = -1;
       state = 'PLAY'; player.invuln = 40; hitStop = 0;
+    } else if (state === 'HANRAGE') {
+      hanSplitAndResume();
     }
   }
   function drawSkipHint() {
@@ -3081,6 +3189,9 @@
     } else if (state === 'INTRO3') {
       updateIntro3();
       if (state === 'INTRO3') updatePlayer(true);
+    } else if (state === 'HANRAGE') {
+      updateHanRage();
+      if (state === 'HANRAGE') updatePlayer(true);
     } else if (state === 'UPGRADE') {
       if (pressed['1']) applyUpgrade(0);
       else if (pressed['2']) applyUpgrade(1);
@@ -3095,12 +3206,11 @@
         if (pressed['p']) pShots.push({ x: player.x + (player.facing>0?player.w:0), y: player.y + player.h/2, vx: player.facing*16, life: 80 });
         if (state === 'PLAY' && boss.type === 'skirr' && !boss.phase2 && boss.hp <= 300 && boss.hp > 0) startSkirrRage();
         if (state === 'PLAY' && boss.type === 'ssun' && !boss.enraged && boss.hp <= 150 && boss.hp > 0) startEnrage();
+        if (state === 'PLAY' && boss.type === 'hansubal' && !boss.phase2 && boss.hp <= 320 && boss.hp > 0) startHanRage();
       }
       if (hitFlash > 0 && hitStop <= 0) hitFlash--;
-    } else if (state === 'WIN') {
-      if (pressed['enter'] || pressed[' ']) startIntro();
-    } else if (state === 'LOSE') {
-      if (pressed['enter'] || pressed[' ']) state = 'MENU';   // 패배 → 메인화면
+    } else if (state === 'WIN' || state === 'LOSE') {
+      if (pressed['enter'] || pressed[' ']) state = 'MENU';   // 클리어/패배 → 메인화면
     }
   }
 
@@ -3117,6 +3227,7 @@
     else if (state === 'SKIRRRAGE') drawSkirrRage();
     else if (state === 'SKIRRREVIVE') drawSkirrRevive();
     else if (state === 'INTRO3') drawIntro3();
+    else if (state === 'HANRAGE') drawHanRage();
     else if (state === 'UPGRADE') drawUpgrade();
     else if (state === 'PLAY') {
       ctx.save();
