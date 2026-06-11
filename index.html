@@ -83,6 +83,14 @@
   const ITEMS = {
     longsword: { name: '장검', cost: 200, slots: 2, range: 0.25, color: '#bcd2ff',
                  desc: '사거리 25% 증가 · 2칸' },
+    magicbook: { name: '마법서', cost: 300, slots: 1, specialMul: 0.2, color: '#b072ff',
+                 desc: '특수공격 데미지 +20% · 1칸' },
+    smoke:     { name: '연막탄', cost: 500, slots: 2, dashInvuln: true, color: '#9aa3b0',
+                 desc: '대쉬 중 무적 · 2칸' },
+    heart:     { name: '하트 펜던트', cost: 250, slots: 1, hp: 1, color: '#ff6b8e',
+                 desc: '체력 +1 · 1칸' },
+    stretch:   { name: '살아나는 기지개', cost: 600, slots: 3, hp: 2, color: '#ffd24a',
+                 desc: '체력 +2 · 3칸' },
   };
   let currentUser = null, profile = null;
   let drag = null, dragX = 0, dragY = 0;   // 드래그앤드롭 상태
@@ -111,10 +119,16 @@
   function equippedCount(id) { return profile.equipped.filter(x => x === id).length; }
   function availCount(id) { return ownedCount(id) - equippedCount(id); }
   function usedSlots() { return profile.equipped.reduce((s, id) => s + (ITEMS[id] ? ITEMS[id].slots : 1), 0); }
-  function equippedRangeMul() {
-    let m = 1;
-    if (profile) for (const id of profile.equipped) if (ITEMS[id] && ITEMS[id].range) m += ITEMS[id].range;
-    return m;
+  function equipBonus() {
+    const b = { hp: 0, range: 1, specialMul: 1, dashInvuln: false };
+    if (profile) for (const id of profile.equipped) {
+      const it = ITEMS[id]; if (!it) continue;
+      if (it.range) b.range += it.range;
+      if (it.hp) b.hp += it.hp;
+      if (it.specialMul) b.specialMul += it.specialMul;
+      if (it.dashInvuln) b.dashInvuln = true;
+    }
+    return b;
   }
   // 초기 로딩: 마지막 유저 자동 로그인, 없으면 게스트
   try { const last = localStorage.getItem('songdih_lastuser'); if (last) loadProfile(last); } catch (e) {}
@@ -170,8 +184,11 @@
       stunTimer: 0,                     // 피격 경직
       dropTimer: 0,                     // 플랫폼 아래로 내려가기
       meleeDmg: 8, moveSpeed: 6.3, meleeCdBase: 18,   // 강화로 변하는 능력치
-      rangeMul: equippedRangeMul(),                   // 장비(장검) 사거리 배수
+      rangeMul: 1, specialMul: 1, dashInvuln: false,  // 장비 효과
     };
+    const eb = equipBonus();                          // 장착 도구 효과 적용
+    player.maxHp = 5 + eb.hp; player.hp = player.maxHp;
+    player.rangeMul = eb.range; player.specialMul = eb.specialMul; player.dashInvuln = eb.dashInvuln;
     boss = {
       type: 'ssun',
       x: 700, y: GROUND_Y - 150, w: 60, h: 150,   // 마른 체형
@@ -243,6 +260,7 @@
   }
   function damagePlayer() {
     if (player.invuln > 0 || player.castTimer > 0) return;   // 피격 후/특수공격 중 무적
+    if (player.dashInvuln && player.dashTimer > 0) return;   // 연막탄: 대쉬 중 무적
     player.hp -= 1;
     player.invuln = 70;
     player.stunTimer = 20;                 // 잠시 경직
@@ -331,7 +349,7 @@
     if (laser.tick <= 0) {
       laser.tick = 6;                         // 0.1초마다
       if (rectsOverlap(beam, boss)) {
-        boss.hp = Math.max(0, boss.hp - 2.25);
+        boss.hp = Math.max(0, boss.hp - 2.25 * (player.specialMul || 1));
         boss.flash = 5;
         boss.stun = 9;                        // 맞을 때마다 조금씩 경직
         spawnParticles(boss.x + boss.w/2, laser.y + laser.h/2, '#e0b3ff', 5, 4);
@@ -1402,40 +1420,41 @@
   }
 
   // ---------- 상점 ----------
+  const SHOP_IDS = ['longsword', 'magicbook', 'heart', 'smoke', 'stretch'];
+  function shopRowRect(i) { return { x: 140, y: 120 + i*70, w: W - 280, h: 60 }; }
+  function shopBuyRect(i) { const r = shopRowRect(i); return { x: r.x + r.w - 110, y: r.y + 12, w: 92, h: 36 }; }
   function drawShop() {
     drawBackground();
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,0.66)'; ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px "Trebuchet MS", sans-serif';
-    ctx.fillText('🛒 상점', W/2, 90);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px "Trebuchet MS", sans-serif';
+    ctx.fillText('🛒 상점', W/2, 70);
     drawGoldLogin();
-    // 장검 카드
-    const it = ITEMS.longsword;
-    const cx = W/2, cardY = 140, cw = 360, cardX = cx - cw/2;
-    ctx.fillStyle = '#1c2440'; roundRect(cardX, cardY, cw, 120, 12); ctx.fill();
-    ctx.lineWidth = 3; ctx.strokeStyle = it.color; roundRect(cardX, cardY, cw, 120, 12); ctx.stroke();
-    // 아이콘 (장검)
-    drawSwordIcon(cardX + 50, cardY + 60, 1.4);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 24px "Trebuchet MS", sans-serif';
-    ctx.fillText(it.name, cardX + 100, cardY + 44);
-    ctx.fillStyle = '#aab4d4'; ctx.font = '15px "Trebuchet MS", sans-serif';
-    ctx.fillText(it.desc, cardX + 100, cardY + 72);
-    ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
-    ctx.fillText(it.cost + ' G   (보유 ' + ownedCount('longsword') + ')', cardX + 100, cardY + 100);
-    // 구매 버튼
-    const canBuy = currentUser && profile.gold >= it.cost;
-    drawPlainButton(buyBtn(), '구매', canBuy ? '#2f7a3a' : '#555');
-    if (!currentUser) { ctx.textAlign = 'center'; ctx.fillStyle = '#ff9a9a'; ctx.font = '14px "Trebuchet MS"'; ctx.fillText('구매하려면 로그인하세요', W/2, 364); }
+    for (let i = 0; i < SHOP_IDS.length; i++) {
+      const id = SHOP_IDS[i], it = ITEMS[id], r = shopRowRect(i);
+      ctx.fillStyle = '#1c2440'; roundRect(r.x, r.y, r.w, r.h, 10); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = it.color; roundRect(r.x, r.y, r.w, r.h, 10); ctx.stroke();
+      drawToolIcon(id, r.x + 34, r.y + r.h/2);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
+      ctx.fillText(it.name, r.x + 66, r.y + 26);
+      ctx.fillStyle = '#aab4d4'; ctx.font = '13px "Trebuchet MS", sans-serif';
+      ctx.fillText(it.desc + '   (보유 ' + ownedCount(id) + ')', r.x + 66, r.y + 46);
+      ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 16px "Trebuchet MS", sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(it.cost + ' G', r.x + r.w - 122, r.y + 36);
+      const can = currentUser && profile.gold >= it.cost;
+      drawPlainButton(shopBuyRect(i), '구매', can ? '#2f7a3a' : '#555');
+    }
+    if (!currentUser) { ctx.textAlign = 'center'; ctx.fillStyle = '#ff9a9a'; ctx.font = '14px "Trebuchet MS"'; ctx.fillText('구매하려면 로그인하세요', W/2, H - 28); }
     drawPlainButton(backBtn(), '← 뒤로', '#5a4030');
     ctx.textAlign = 'left';
   }
   function drawSwordIcon(x, y, s) {
     ctx.save(); ctx.translate(x, y); ctx.rotate(-0.7); ctx.scale(s, s);
     ctx.fillStyle = '#cfd7ff'; ctx.strokeStyle = '#13161c'; ctx.lineWidth = 2;
-    ctx.fillRect(-3, -22, 6, 34); ctx.strokeRect(-3, -22, 6, 34);   // 날
-    ctx.fillStyle = '#8a5a2b'; ctx.fillRect(-9, 12, 18, 5); ctx.strokeRect(-9, 12, 18, 5); // 가드
-    ctx.fillStyle = '#5a3c22'; ctx.fillRect(-2.5, 17, 5, 12); ctx.strokeRect(-2.5, 17, 5, 12); // 손잡이
+    ctx.fillRect(-3, -22, 6, 34); ctx.strokeRect(-3, -22, 6, 34);
+    ctx.fillStyle = '#8a5a2b'; ctx.fillRect(-9, 12, 18, 5); ctx.strokeRect(-9, 12, 18, 5);
+    ctx.fillStyle = '#5a3c22'; ctx.fillRect(-2.5, 17, 5, 12); ctx.strokeRect(-2.5, 17, 5, 12);
     ctx.restore();
   }
 
@@ -1448,7 +1467,28 @@
     return list;
   }
   function drawToolIcon(id, x, y) {
-    if (id === 'longsword') drawSwordIcon(x, y, 1.3);
+    if (id === 'longsword') { drawSwordIcon(x, y, 1.3); return; }
+    ctx.save(); ctx.translate(x, y); ctx.lineWidth = 2; ctx.strokeStyle = '#13161c';
+    if (id === 'magicbook') {
+      ctx.fillStyle = '#7a3bd0'; ctx.fillRect(-15, -17, 30, 34); ctx.strokeRect(-15, -17, 30, 34);
+      ctx.fillStyle = '#e0c0ff'; ctx.fillRect(-15, -17, 7, 34); ctx.strokeRect(-15, -17, 7, 34);
+      ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 18px serif'; ctx.textAlign = 'center'; ctx.fillText('★', 4, 6);
+    } else if (id === 'smoke') {
+      ctx.fillStyle = '#3a3f48'; ctx.beginPath(); ctx.arc(0, 5, 14, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#9aa3b0'; ctx.fillRect(-4, -14, 8, 8); ctx.strokeRect(-4, -14, 8, 8);
+      ctx.strokeStyle = '#ff9a3d'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(6, -22); ctx.stroke();
+    } else if (id === 'heart') {
+      ctx.strokeStyle = '#aa3b55'; ctx.beginPath(); ctx.moveTo(-9, -12); ctx.lineTo(0, -19); ctx.lineTo(9, -12); ctx.stroke();
+      ctx.fillStyle = '#ff6b8e'; drawHeart(0, -8, 13);
+    } else if (id === 'stretch') {  // 기지개 피는 사람 석상
+      ctx.fillStyle = '#bdb8ad'; ctx.fillRect(-12, 12, 24, 6); ctx.strokeStyle = '#7a766c'; ctx.strokeRect(-12, 12, 24, 6); // 받침
+      ctx.fillStyle = '#cfcabf';
+      ctx.beginPath(); ctx.arc(0, -14, 7, 0, Math.PI*2); ctx.fill(); ctx.stroke();   // 머리
+      ctx.fillRect(-5, -7, 10, 19); ctx.strokeRect(-5, -7, 10, 19);                  // 몸
+      ctx.lineWidth = 4; ctx.strokeStyle = '#cfcabf';
+      ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(-13, -20); ctx.moveTo(4, -4); ctx.lineTo(13, -20); ctx.stroke(); // 팔(기지개)
+    }
+    ctx.restore(); ctx.textAlign = 'left';
   }
   function drawEquip() {
     drawBackground();
@@ -1516,10 +1556,10 @@
       ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 60px "Trebuchet MS", sans-serif';
-      ctx.fillText('재시도', W/2, 250);
+      ctx.fillText('GAME OVER', W/2, 240);
       ctx.fillStyle = '#aaaaaa';
       ctx.font = '18px "Trebuchet MS", sans-serif';
-      ctx.fillText('클릭 또는 Enter / Space', W/2, 320);
+      ctx.fillText('클릭 또는 Enter / Space → 메인화면', W/2, 310);
     }
     ctx.textAlign = 'left';
   }
@@ -1533,7 +1573,7 @@
 
   cv.addEventListener('click', (e) => {
     const { mx, my } = evtPos(e);
-    if (state === 'LOSE') { startIntro(); return; }
+    if (state === 'LOSE') { state = 'MENU'; return; }
     if (state === 'UPGRADE') {
       for (let i = 0; i < 3; i++) if (inRect(mx, my, cardRect(i))) { applyUpgrade(i); return; }
       return;
@@ -1541,10 +1581,16 @@
     if (state === 'SHOP') {
       if (inRect(mx, my, loginBtn())) { doLogin(); return; }
       if (inRect(mx, my, backBtn())) { state = 'MENU'; return; }
-      if (inRect(mx, my, buyBtn()) && currentUser && profile.gold >= ITEMS.longsword.cost) {
-        profile.gold -= ITEMS.longsword.cost;
-        profile.owned.longsword = (profile.owned.longsword || 0) + 1;
-        saveProfile();
+      for (let i = 0; i < SHOP_IDS.length; i++) {
+        if (inRect(mx, my, shopBuyRect(i))) {
+          const id = SHOP_IDS[i], it = ITEMS[id];
+          if (currentUser && profile.gold >= it.cost) {
+            profile.gold -= it.cost;
+            profile.owned[id] = (profile.owned[id] || 0) + 1;
+            saveProfile();
+          }
+          return;
+        }
       }
       return;
     }
@@ -3051,8 +3097,10 @@
         if (state === 'PLAY' && boss.type === 'ssun' && !boss.enraged && boss.hp <= 150 && boss.hp > 0) startEnrage();
       }
       if (hitFlash > 0 && hitStop <= 0) hitFlash--;
-    } else if (state === 'WIN' || state === 'LOSE') {
+    } else if (state === 'WIN') {
       if (pressed['enter'] || pressed[' ']) startIntro();
+    } else if (state === 'LOSE') {
+      if (pressed['enter'] || pressed[' ']) state = 'MENU';   // 패배 → 메인화면
     }
   }
 
