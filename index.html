@@ -130,7 +130,8 @@
     touchHeld = h;
   }
   // 게임플레이/이동 구간에서 터치 컨트롤 사용(메뉴/상점은 탭=클릭)
-  function touchControlsActive() { return mobileMode && (state === 'PLAY' || state === 'TRANSITION' || CUTSCENES.includes(state)); }
+  const TOUCH_OFF_STATES = ['MENU', 'SHOP', 'EQUIP', 'WIN', 'LOSE'];
+  function touchControlsActive() { return mobileMode && !TOUCH_OFF_STATES.includes(state); }
   function clearTouchState() {   // 터치 상태 완전 초기화(고정 버그 방지)
     for (const k in activeTouches) delete activeTouches[k];
     touchHeld = {}; touchEdge = {}; prevTouchHeld = {};
@@ -1626,6 +1627,14 @@
     ctx.fillText('SONGDIH 2.0', W/2, by + 76);
     ctx.fillStyle = '#ffe08a'; ctx.font = '20px "Comic Sans MS"';
     ctx.fillText('～ 방과후 보스 배틀 ～', W/2, by + 116);
+    // 모바일 지원 안내(반짝임)
+    ctx.save();
+    ctx.fillStyle = '#7fe3ff';
+    ctx.globalAlpha = 0.7 + 0.3 * Math.abs(Math.sin(frame * 0.08));
+    ctx.font = 'bold 22px "Comic Sans MS","Trebuchet MS"';
+    ctx.shadowColor = '#7fe3ff'; ctx.shadowBlur = 12;
+    ctx.fillText('이제 모바일도 된다?!?!?!', W/2, by + 146);
+    ctx.restore();
 
     // 조작 모드 칩
     const info = [ { t: '① 방향키' }, { t: '② WASD' } ];
