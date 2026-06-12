@@ -1893,8 +1893,8 @@
   }
   function inRect(mx, my, r) { return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h; }
 
-  cv.addEventListener('click', (e) => {
-    const { mx, my } = evtPos(e);
+  // ---------- UI 입력(클릭/탭 공통) ----------
+  function handleUITap(mx, my) {
     if (state === 'LOSE') { state = 'MENU'; return; }
     if (state === 'UPGRADE') {
       for (let i = 0; i < 3; i++) if (inRect(mx, my, cardRect(i))) { applyUpgrade(i); return; }
@@ -1939,49 +1939,30 @@
       if (inRect(mx, my, equipBtn())) { state = 'EQUIP'; panelScroll = 0; return; }
       if (inRect(mx, my, startBtn())) { startIntro(); return; }
     }
-  });
+  }
+  cv.addEventListener('click', (e) => { const { mx, my } = evtPos(e); handleUITap(mx, my); });
 
-  // ---------- 도구 장착 드래그앤드롭 ----------
-  cv.addEventListener('mousedown', (e) => {
-    if (state !== 'EQUIP') return;
-    const { mx, my } = evtPos(e);
+  // ---------- 도구 장착 드래그앤드롭 (마우스/터치 공통) ----------
+  function uiDragStart(mx, my) {
+    if (state !== 'EQUIP') return false;
     // 장착된 아이템(칸) 위에서 시작 → 해제 드래그
     let si = 0;
     for (let eq = 0; eq < profile.equipped.length; eq++) {
       const id = profile.equipped[eq], it = ITEMS[id]; if (!it) continue;
       const s0 = slotRect(si), s1 = slotRect(si + it.slots - 1);
       const r = { x: s0.x, y: s0.y, w: (s1.x + s1.w) - s0.x, h: s0.h };
-      if (inRect(mx, my, r)) { drag = { from: 'equip', id, index: eq }; dragX = mx; dragY = my; return; }
+      if (inRect(mx, my, r)) { drag = { from: 'equip', id, index: eq }; dragX = mx; dragY = my; return true; }
       si += it.slots;
     }
     // 인벤토리에서 시작 → 장착 드래그
     const list = invList();
     for (let i = 0; i < list.length; i++) {
-      if (inRect(mx, my, invRect(i))) { drag = { from: 'inv', id: list[i].id, index: i }; dragX = mx; dragY = my; return; }
+      if (inRect(mx, my, invRect(i))) { drag = { from: 'inv', id: list[i].id, index: i }; dragX = mx; dragY = my; return true; }
     }
-  });
-  cv.addEventListener('mousemove', (e) => {
+    return false;
+  }
+  function uiDrop(mx, my) {
     if (!drag) return;
-    const { mx, my } = evtPos(e); dragX = mx; dragY = my;
-  });
-  // 상점/장착 스크롤
-  cv.addEventListener('wheel', (e) => {
-    if (state !== 'SHOP' && state !== 'EQUIP') return;
-    e.preventDefault();
-    let maxScroll = 0;
-    if (state === 'SHOP') {
-      const contentBottom = 100 + (SHOP_IDS.length + 1) * 62;   // 마지막 행 하단
-      maxScroll = Math.max(0, contentBottom - (H - 70));
-    } else {
-      const rows = Math.ceil(invList().length / 6);
-      const contentBottom = 320 + rows * 100;
-      maxScroll = Math.max(0, contentBottom - (H - 60));
-    }
-    panelScroll = clamp(panelScroll + (e.deltaY > 0 ? 48 : -48), 0, maxScroll);
-  }, { passive: false });
-  cv.addEventListener('mouseup', (e) => {
-    if (!drag) return;
-    const { mx, my } = evtPos(e);
     const overEquip = my >= 120 && my <= 252;   // 장착 칸 영역
     if (drag.from === 'inv' && overEquip) {
       if (canEquip(drag.id)) { profile.equipped.push(drag.id); saveProfile(); }
@@ -1990,7 +1971,55 @@
       profile.equipped.splice(drag.index, 1); saveProfile();
     }
     drag = null;
-  });
+  }
+  function uiScrollMax() {
+    if (state === 'SHOP') { const cb = 100 + (SHOP_IDS.length + 1) * 62; return Math.max(0, cb - (H - 70)); }
+    if (state === 'EQUIP') { const rows = Math.ceil(invList().length / 6); const cb = 320 + rows * 100; return Math.max(0, cb - (H - 60)); }
+    return 0;
+  }
+  cv.addEventListener('mousedown', (e) => { const { mx, my } = evtPos(e); uiDragStart(mx, my); });
+  cv.addEventListener('mousemove', (e) => { if (!drag) return; const { mx, my } = evtPos(e); dragX = mx; dragY = my; });
+  cv.addEventListener('mouseup', (e) => { if (!drag) return; const { mx, my } = evtPos(e); uiDrop(mx, my); });
+  // 상점/장착 스크롤 (휠)
+  cv.addEventListener('wheel', (e) => {
+    if (state !== 'SHOP' && state !== 'EQUIP') return;
+    e.preventDefault();
+    panelScroll = clamp(panelScroll + (e.deltaY > 0 ? 48 : -48), 0, uiScrollMax());
+  }, { passive: false });
+
+  // ---------- 메뉴/상점/장착 터치 (드래그앤드롭·스크롤·탭) ----------
+  let uiTouch = null;
+  function onUITouch(e) {
+    if (!TOUCH_OFF_STATES.includes(state)) return;   // 게임플레이는 별도 핸들러
+    const t = e.changedTouches[0]; if (!t) return;
+    const p = touchPos(t);
+    if (e.type === 'touchstart') {
+      e.preventDefault();
+      uiTouch = { x0: p.x, y0: p.y, lastY: p.y, moved: false };
+      uiDragStart(p.x, p.y);            // EQUIP: 아이템 위면 드래그 시작
+    } else if (e.type === 'touchmove') {
+      if (!uiTouch) return;
+      e.preventDefault();
+      if (Math.hypot(p.x - uiTouch.x0, p.y - uiTouch.y0) > 8) uiTouch.moved = true;
+      if (drag) { dragX = p.x; dragY = p.y; }
+      else if (uiTouch.moved && (state === 'SHOP' || state === 'EQUIP')) {
+        panelScroll = clamp(panelScroll - (p.y - uiTouch.lastY), 0, uiScrollMax());   // 드래그 스크롤
+      }
+      uiTouch.lastY = p.y;
+    } else {   // touchend / touchcancel
+      if (!uiTouch) return;
+      e.preventDefault();
+      if (drag) uiDrop(p.x, p.y);
+      else if (!uiTouch.moved) handleUITap(uiTouch.x0, uiTouch.y0);   // 움직임 거의 없으면 탭
+      uiTouch = null;
+    }
+  }
+  if (mobileMode) {
+    cv.addEventListener('touchstart', onUITouch, { passive: false });
+    cv.addEventListener('touchmove', onUITouch, { passive: false });
+    cv.addEventListener('touchend', onUITouch, { passive: false });
+    cv.addEventListener('touchcancel', onUITouch, { passive: false });
+  }
 
   // ---------- 입장 연출 ----------
   function startIntro() {
