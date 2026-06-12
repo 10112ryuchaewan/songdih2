@@ -99,6 +99,16 @@
                  desc: '특수: 엉덩방아 내려찍기(주변 30) · 2칸 · 특수' },
     prayer:    { name: '회복의 기원', cost: 1000, slots: 3, tag: 'special', special: 'heal', color: '#7fe3ff',
                  desc: '특수: HP 1 회복(게이지 2배) · 3칸 · 특수' },
+    oil:       { name: '윤활유', cost: 250, slots: 1, meleeCd: 1.8, color: '#cfe08a',
+                 desc: '근접 쿨타임 0.03초 감소 · 1칸' },
+    wristband: { name: '손목 보호대', cost: 600, slots: 3, autoMelee: true, tag: 'unique', color: '#d08a5a',
+                 desc: '근접키 홀드 시 자동 연타 · 3칸 · 고유' },
+    hood:      { name: '두건', cost: 500, slots: 4, dodge: 0.3, tag: 'unique', color: '#6a7a5a',
+                 desc: '30% 확률로 피해 무시 · 4칸 · 고유' },
+    adrenaline:{ name: '아드레날린', cost: 300, slots: 2, adrenaline: true, tag: 'unique', color: '#ff5b5b',
+                 desc: '체력 1칸일 때 공격력 2배 · 2칸 · 고유' },
+    sole:      { name: '튼튼한 밑창', cost: 700, slots: 3, noFallDmg: true, tag: 'unique', color: '#8a8a9a',
+                 desc: '낙오 피해 무효 · 3칸 · 고유' },
   };
   const SPECIAL_GAUGE = 100;   // 기본 특수 게이지
   let currentUser = null, profile = null;
@@ -133,7 +143,8 @@
   function availCount(id) { return ownedCount(id) - equippedCount(id); }
   function usedSlots() { return profile.equipped.reduce((s, id) => s + (ITEMS[id] ? ITEMS[id].slots : 1), 0); }
   function equipBonus() {
-    const b = { hp: 0, range: 1, specialMul: 1, dashInvuln: false, dashDist: 1, dashDmg: 0, special: 'laser' };
+    const b = { hp: 0, range: 1, specialMul: 1, dashInvuln: false, dashDist: 1, dashDmg: 0, special: 'laser',
+                meleeCd: 0, autoMelee: false, dodge: 0, adrenaline: false, noFallDmg: false };
     if (profile) for (const id of profile.equipped) {
       const it = ITEMS[id]; if (!it) continue;
       if (it.range) b.range += it.range;
@@ -143,6 +154,11 @@
       if (it.dashDist) b.dashDist += it.dashDist;
       if (it.dashDmg) b.dashDmg += it.dashDmg;
       if (it.special) b.special = it.special;
+      if (it.meleeCd) b.meleeCd += it.meleeCd;
+      if (it.autoMelee) b.autoMelee = true;
+      if (it.dodge) b.dodge += it.dodge;
+      if (it.adrenaline) b.adrenaline = true;
+      if (it.noFallDmg) b.noFallDmg = true;
     }
     return b;
   }
@@ -195,6 +211,7 @@
   let byMinions = [];            // 병현: 병순/병철 졸개
   let byClones = [];             // 병현: 패턴2 분신
   let byShots = [];              // 병현: 병철 원거리 탄(빨간 네모)
+  let byRain = [];               // 병현 2페이즈: 하늘 빗방울
   let intro4 = null;             // 병현 입장 컷씬
   let byLonely = null;           // 병현 lonely(2페이즈) 연출
   let skipHold = 0;              // 컷씬 스킵: 스페이스 홀드 프레임
@@ -230,6 +247,8 @@
     player.specialKind = eb.special;
     player.maxSpecial = (eb.special === 'heal') ? SPECIAL_GAUGE * 2 : SPECIAL_GAUGE;   // 회복의 기원: 2배 요구
     player.special = 0;
+    player.meleeCdBase = Math.max(2, player.meleeCdBase - eb.meleeCd);   // 윤활유
+    player.autoMelee = eb.autoMelee; player.dodge = eb.dodge; player.adrenaline = eb.adrenaline; player.noFallDmg = eb.noFallDmg;
     boss = {
       type: 'ssun',
       x: 700, y: GROUND_Y - 150, w: 60, h: 150,   // 마른 체형
@@ -245,7 +264,7 @@
     intro2 = null; intro3 = null;
     waves = []; bullets = []; neonSquares = []; neonWall = null; micProjs = []; skirrRage = null; skirrRevive = null; redBlocks = []; redTimer = 0; pShots = [];
     laughs = []; notes = []; noteLaser = null; mapAtk = 0; clockWarns = []; hanRage = null; hanMines = [];
-    byMinions = []; byClones = []; byShots = []; intro4 = null; byLonely = null;
+    byMinions = []; byClones = []; byShots = []; byRain = []; intro4 = null; byLonely = null;
     burps = [];
     fartZones = [];             // [{ x, w, life, max }]
     laser = null;               // { y, h, dir, life, hit }
@@ -263,6 +282,7 @@
   }
   function rand(a, b) { return a + Math.random() * (b - a); }
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function atkMul() { return (player && player.adrenaline && player.hp <= 1) ? 2 : 1; }   // 아드레날린: 1칸일 때 2배
   function lerp(a, b, t) { return a + (b - a) * t; }
   function burpBox(b) { return { x: b.x - b.r, y: b.y - b.r, w: b.r*2, h: b.r*2 }; }
   function clearBurpsInRect(r) {            // 플레이어 공격으로 트름 격추
@@ -303,6 +323,9 @@
   function damagePlayer() {
     if (player.invuln > 0 || player.castTimer > 0) return;   // 피격 후/특수공격 중 무적
     if (player.dashInvuln && player.dashTimer > 0) return;   // 연막탄: 대쉬 중 무적
+    if (player.dodge && Math.random() < player.dodge) {       // 두건: 확률 회피
+      player.invuln = 16; popText(player.x + player.w/2, player.y - 6, 'MISS', '#cfe08a'); return;
+    }
     player.hp -= 1;
     player.invuln = 70;
     player.stunTimer = 20;                 // 잠시 경직
@@ -375,6 +398,7 @@
     } else player.onGround = false;
   }
   function dangerHit() {
+    if (player.noFallDmg) return;   // 튼튼한 밑창: 낙오 피해 무효
     if (player.invuln > 0) return;
     player.hp -= 1; player.invuln = 50;
     hitFlash = 8; shakeAmt = Math.max(shakeAmt, 11);
@@ -398,7 +422,7 @@
     if (laser.tick <= 0) {
       laser.tick = 6;                         // 0.1초마다
       if (rectsOverlap(beam, boss)) {
-        boss.hp = Math.max(0, boss.hp - 2.25 * (player.specialMul || 1));
+        boss.hp = Math.max(0, boss.hp - 2.25 * (player.specialMul || 1) * atkMul());
         boss.flash = 5;
         boss.stun = 9;                        // 맞을 때마다 조금씩 경직
         spawnParticles(boss.x + boss.w/2, laser.y + laser.h/2, '#e0b3ff', 5, 4);
@@ -433,7 +457,8 @@
       shakeAmt = Math.max(shakeAmt, 16);
       spawnParticles(player.x + player.w/2, player.y + player.h, '#ff9a3d', 22, 9);
       const hb = { x: player.x + player.w/2 - 95, y: player.y - 24, w: 190, h: player.h + 48 };
-      if (rectsOverlap(hb, boss)) { damageBoss(30); gainSpecial(); }
+      if (rectsOverlap(hb, boss)) { damageBoss(30 * atkMul()); gainSpecial(); }
+      if (stage === 4) byeongSlamHit(hb, 30 * atkMul());   // 졸개·분신에도 광역 피해
       if (state !== 'PLAY') return;
     }
     // 타이머 갱신(무적 외)
@@ -501,21 +526,22 @@
       player.dashTimer = 11;
       player.dashCd = 40;
       player.dashDir = player.facing;
-      player.dashHitDone = false;            // 이번 대쉬 단검 피해 1회
+      player.dashHitDone = false;            // 보스 본체 단검 피해 1회
+      player.dashId = (player.dashId || 0) + 1;   // 졸개·분신은 대쉬당 각 1회
       player.sx = 1.4; player.sy = 0.72;     // 쭉 늘어나는 대시
       spawnParticles(player.x + player.w / 2, player.y + player.h / 2, '#7fe3ff', 12, 6);
     }
     // 암살용 단검: 대쉬가 보스에 닿으면 추가 피해(대쉬당 1회)
     if (player.dashTimer > 0 && player.dashDmg > 0 && !player.dashHitDone && rectsOverlap(player, boss)) {
       player.dashHitDone = true;
-      damageBoss(player.dashDmg);
+      damageBoss(player.dashDmg * atkMul());
       gainSpecial();
       hitStop = 3; shakeAmt = Math.max(shakeAmt, 8);
       spawnParticles(boss.x + boss.w/2, player.y + player.h/2, '#c8ccda', 14, 8);
       if (state !== 'PLAY') return;
     }
-    // 근접공격 (X) : 방향 결정 (위 / 아래(공중) / 옆)
-    if (actPressed('melee') && player.meleeCd <= 0 && !lockAttacks) {
+    // 근접공격 (X) : 방향 결정 (위 / 아래(공중) / 옆) — 손목 보호대: 홀드 시 자동 연타
+    if ((actPressed('melee') || (player.autoMelee && actHeld('melee'))) && player.meleeCd <= 0 && !lockAttacks) {
       player.meleeTimer = 12;
       player.meleeCd = player.meleeCdBase;
       player.meleeHit = false;
@@ -598,7 +624,7 @@
       clearBurpsInRect(hb);
       if (!player.meleeHit && rectsOverlap(hb, boss)) {
         player.meleeHit = true;
-        damageBoss(player.meleeDmg);
+        damageBoss(player.meleeDmg * atkMul());
         gainSpecial();
         // 타격감: 잠깐 정지 + 화면 흔들림 + 임팩트 파편
         hitStop = 3;
@@ -1547,7 +1573,7 @@
   }
 
   // ---------- 상점 ----------
-  const SHOP_IDS = ['longsword', 'magicbook', 'heart', 'smoke', 'stretch', 'springpad', 'dagger', 'buttslam', 'prayer'];
+  const SHOP_IDS = ['longsword', 'magicbook', 'heart', 'smoke', 'stretch', 'springpad', 'dagger', 'buttslam', 'prayer', 'oil', 'wristband', 'hood', 'adrenaline', 'sole'];
   function shopRowRect(i) { return { x: 140, y: 100 + i*62 - panelScroll, w: W - 280, h: 54 }; }
   function slotRowIndex() { return SHOP_IDS.length; }   // 칸 추가 행
   function shopBuyRect(i) { const r = shopRowRect(i); return { x: r.x + r.w - 110, y: r.y + 12, w: 92, h: 36 }; }
@@ -1655,6 +1681,27 @@
       ctx.fillStyle = '#7fe3ff'; drawHeart(0, -2, 12);
       ctx.strokeStyle = '#dffaff'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(0, -6); ctx.moveTo(-5, -12); ctx.lineTo(5, -12); ctx.stroke();  // 십자
+    } else if (id === 'oil') {         // 윤활유 (기름통)
+      ctx.fillStyle = '#cfe08a'; ctx.fillRect(-10, -6, 16, 16); ctx.strokeRect(-10, -6, 16, 16);
+      ctx.fillStyle = '#9aa85a'; ctx.fillRect(-10, -6, 16, 4); ctx.strokeStyle = '#13161c'; ctx.beginPath(); ctx.moveTo(6, -2); ctx.lineTo(14, -6); ctx.lineTo(14, -2); ctx.stroke();  // 주둥이
+      ctx.fillStyle = '#7a8a3a'; ctx.beginPath(); ctx.arc(14, -8, 2, 0, Math.PI*2); ctx.fill();  // 기름방울
+    } else if (id === 'wristband') {   // 손목 보호대
+      ctx.fillStyle = '#d08a5a'; ctx.fillRect(-14, -8, 28, 16); ctx.strokeRect(-14, -8, 28, 16);
+      ctx.strokeStyle = '#7a4a2a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-14, -2); ctx.lineTo(14, -2); ctx.moveTo(-14, 3); ctx.lineTo(14, 3); ctx.stroke();
+    } else if (id === 'hood') {        // 두건
+      ctx.fillStyle = '#6a7a5a'; ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(14, 6); ctx.lineTo(-14, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2a2a22'; ctx.fillRect(-8, -2, 16, 5);  // 눈 그림자
+    } else if (id === 'adrenaline') {  // 아드레날린 (주사기)
+      ctx.save(); ctx.rotate(-0.7);
+      ctx.fillStyle = '#ffd0d0'; ctx.fillRect(-3, -14, 6, 22); ctx.strokeRect(-3, -14, 6, 22);
+      ctx.fillStyle = '#ff5b5b'; ctx.fillRect(-3, 0, 6, 8);
+      ctx.strokeStyle = '#13161c'; ctx.beginPath(); ctx.moveTo(0, 8); ctx.lineTo(0, 16); ctx.stroke();  // 바늘
+      ctx.fillStyle = '#ffd0d0'; ctx.fillRect(-6, -16, 12, 3); ctx.strokeRect(-6, -16, 12, 3);
+      ctx.restore();
+    } else if (id === 'sole') {        // 튼튼한 밑창 (신발창)
+      ctx.fillStyle = '#8a8a9a'; roundRect(-15, 2, 30, 8, 4); ctx.fill(); roundRect(-15, 2, 30, 8, 4); ctx.stroke();
+      ctx.fillStyle = '#b8b8c4'; roundRect(-13, -6, 26, 9, 4); ctx.fill(); roundRect(-13, -6, 26, 9, 4); ctx.stroke();
+      ctx.strokeStyle = '#5a5a66'; ctx.lineWidth = 1.5; for (let i = -10; i <= 10; i += 5) { ctx.beginPath(); ctx.moveTo(i, 4); ctx.lineTo(i, 8); ctx.stroke(); }  // 밑창 홈
     }
     ctx.restore(); ctx.textAlign = 'left';
   }
@@ -3534,7 +3581,7 @@
     { t: '날렵한 이동',   d: '근접 딜레이 -0.1초 · 이동속도 +20%' },
   ];
   function startUpgrade() {
-    addGold(stage === 1 ? 100 : stage === 2 ? 300 : stage === 3 ? 500 : 800);   // 보스 클리어 골드
+    addGold(stage === 1 ? 200 : stage === 2 ? 500 : stage === 3 ? 900 : 1500);   // 보스 클리어 골드
     upgrade = { next: (stage < 4) ? 'TRANSITION' : 'WIN' };
     state = 'UPGRADE';
   }
@@ -3593,7 +3640,7 @@
     player.invuln = 30; player.castTimer = 0; player.stunTimer = 0; player.kbx = 0; player.dashTimer = 0; player.slamPhase = 0;
     burps=[]; fartZones=[]; laser=null; particles=[]; floatTexts=[]; waves=[]; bullets=[]; neonSquares=[]; neonWall=null; micProjs=[]; redBlocks=[]; pShots=[];
     laughs=[]; notes=[]; noteLaser=null; mapAtk=0; clockWarns=[]; hanRage=null; hanMines=[];
-    byMinions=[]; byClones=[]; byShots=[];
+    byMinions=[]; byClones=[]; byShots=[]; byRain=[];
     boss = {
       type: 'byeong', x: 720, y: GROUND_Y - 120, w: 64, h: 120,
       hp: 1200, maxHp: 1200, state: 'idle', timer: 120,
@@ -3649,10 +3696,11 @@
   function spawnByMinion(kind, hp, x) {
     const px = (x !== undefined) ? x : boss.x + boss.w/2;
     const dir = (player.x + player.w/2 < px) ? -1 : 1;
+    const mhp = (kind === 'cheol') ? 10 : 20;   // 병순 20 · 병철 10
     byMinions.push({
       kind, x: px - 16, y: boss.y + 16, w: 32, h: 32,
       vx: dir * rand(2, 4), vy: -rand(11, 14),   // 위로 쏘아올림 → 포물선 착지
-      hp, maxHp: hp, grounded: false, shoot: 120, flash: 0,
+      hp: mhp, maxHp: mhp, grounded: false, shoot: 120, flash: 0,
     });
     spawnParticles(px, boss.y + 30, '#ffd24a', 8, 6);
     shakeAmt = Math.max(shakeAmt, 4);
@@ -3671,7 +3719,7 @@
       const gy = elevated ? GROUND_Y - 110 - rand(120, 220) : GROUND_Y - 110;
       byClones.push({
         x: gx - 32, y: gy, w: 64, h: 110,
-        name: isMain ? '병현' : labels[li++ % labels.length], isMain, active: false, hp: 100, maxHp: 100, flash: 0, vy: 0,
+        name: isMain ? '병현' : labels[li++ % labels.length], isMain, active: false, hp: 30, maxHp: 30, flash: 0, vy: 0,
       });
     }
     shakeAmt = Math.max(shakeAmt, 16);
@@ -3814,15 +3862,40 @@
     else if (player.meleeDir === 'up') player.vy = Math.max(player.vy, 4);  // 위공격 시 아래로
     else player.kbx = -player.facing * 4.5;                                 // 옆공격 넉백
   }
+  // 엉덩방아(슬램) 착지 광역 피해 — 졸개·분신
+  function byeongSlamHit(hb, dmg) {
+    for (const m of byMinions) {
+      if (rectsOverlap(hb, m)) { m.hp -= dmg; m.flash = 6; spawnParticles(m.x+m.w/2, m.y+m.h/2, '#ff9a3d', 8, 6); }
+    }
+    byMinions = byMinions.filter(m => m.hp > 0);
+    for (const c of byClones) {
+      if (!rectsOverlap(hb, c)) continue;
+      c.flash = 6; spawnParticles(c.x+c.w/2, c.y+c.h/2, '#ff9a3d', 8, 6);
+      if (c.isMain) {
+        boss.x = clamp(c.x, 40, W - boss.w - 40); boss.y = GROUND_Y - boss.h; boss.visible = true;
+        damageBoss(dmg);
+        if (state !== 'PLAY') return;
+        byeongEndPattern2(true);
+        return;
+      } else {
+        if (!c.active) c.active = true;
+        c.hp -= dmg;
+      }
+    }
+    byClones = byClones.filter(c => !(c.active && c.hp <= 0));
+  }
   function applyPlayerHitsToByeong() {
     const mrect = (!player.meleeHit) ? playerMeleeRect() : null;
     const lrect = laserBeamRect();
+    const dashing = player.dashTimer > 0 && player.dashDmg > 0;
+    const LASER_DMG = 1.5;   // 레이저 프레임당 피해
     // 졸개 피해 (특수게이지 안 오름)
     for (const m of byMinions) {
       let dmg = 0, consume = false;
       if (mrect && rectsOverlap(mrect, m)) { dmg += player.meleeDmg; consume = true; }
-      if (player.dashTimer>0 && player.dashDmg>0 && !player.dashHitDone && rectsOverlap(player, m)) { dmg += player.dashDmg; player.dashHitDone = true; }
-      if (lrect && rectsOverlap(lrect, m)) dmg += 0.5;
+      if (dashing && m.dashHitId !== player.dashId && rectsOverlap(player, m)) { dmg += player.dashDmg; m.dashHitId = player.dashId; }
+      if (lrect && rectsOverlap(lrect, m)) dmg += LASER_DMG;
+      dmg *= atkMul();
       if (dmg > 0) {
         m.hp -= dmg; m.flash = 6; spawnParticles(m.x+m.w/2, m.y+m.h/2, '#fff', 6, 5);
         if (consume) { byeongMeleeReact(); shakeAmt = Math.max(shakeAmt, 7); }
@@ -3833,8 +3906,9 @@
     for (const c of byClones) {
       let dmg = 0, consume = false;
       if (mrect && rectsOverlap(mrect, c)) { dmg += player.meleeDmg; consume = true; }
-      if (player.dashTimer>0 && player.dashDmg>0 && !player.dashHitDone && rectsOverlap(player, c)) { dmg += player.dashDmg; player.dashHitDone = true; }
-      if (lrect && rectsOverlap(lrect, c)) dmg += 0.5;
+      if (dashing && c.dashHitId !== player.dashId && rectsOverlap(player, c)) { dmg += player.dashDmg; c.dashHitId = player.dashId; }
+      if (lrect && rectsOverlap(lrect, c)) dmg += LASER_DMG;
+      dmg *= atkMul();
       if (dmg > 0) {
         c.flash = 6; spawnParticles(c.x+c.w/2, c.y+c.h/2, '#fff', 8, 5);
         if (consume) { byeongMeleeReact(); shakeAmt = Math.max(shakeAmt, 8); }
@@ -3853,6 +3927,20 @@
     byClones = byClones.filter(c => !(c.active && c.hp <= 0));
   }
   function updateByeongEntities() {
+    // 2페이즈: 하늘에서 1초마다 랜덤 위치에 빗방울
+    if (boss.phase2) {
+      boss.rainTimer = (boss.rainTimer || 0) - 1;
+      if (boss.rainTimer <= 0) {
+        for (let i = 0; i < 2; i++) byRain.push({ x: rand(10, W-10), y: -12, vy: rand(7, 10) });
+        boss.rainTimer = 60;   // 1초마다
+      }
+    }
+    for (const r of byRain) {
+      r.y += r.vy; r.vy += 0.15;
+      if (rectsOverlap({ x: r.x-3, y: r.y-8, w: 6, h: 16 }, player)) { damagePlayer(); r.y = H + 99; }
+      else if (r.y > GROUND_Y) { spawnParticles(r.x, GROUND_Y, '#7fb0ff', 3, 3); r.y = H + 99; }
+    }
+    byRain = byRain.filter(r => r.y < H + 50);
     // 졸개 이동/공격
     for (const m of byMinions) {
       if (m.flash > 0) m.flash--;
@@ -3925,6 +4013,12 @@
     ctx.fillText('병현', cx, b.y - 14); ctx.textAlign = 'left';
   }
   function drawByeongEntities() {
+    // 빗방울 (2페이즈)
+    if (byRain.length) {
+      ctx.save(); ctx.strokeStyle = '#9ec4ff'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+      for (const r of byRain) { ctx.beginPath(); ctx.moveTo(r.x, r.y - 9); ctx.lineTo(r.x, r.y + 5); ctx.stroke(); }
+      ctx.restore();
+    }
     // 빨간 네모 탄
     for (const s of byShots) {
       ctx.save(); ctx.shadowColor = '#ff3b3b'; ctx.shadowBlur = 10;
