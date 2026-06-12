@@ -129,16 +129,23 @@
     for (const id in activeTouches) { const t = activeTouches[id]; applyTouchPoint(t.x, t.y, h); }
     touchHeld = h;
   }
-  // 게임플레이 중에만 터치 컨트롤 사용(메뉴/상점은 탭=클릭)
-  function touchControlsActive() { return mobileMode && (state === 'PLAY' || CUTSCENES.includes(state)); }
+  // 게임플레이/이동 구간에서 터치 컨트롤 사용(메뉴/상점은 탭=클릭)
+  function touchControlsActive() { return mobileMode && (state === 'PLAY' || state === 'TRANSITION' || CUTSCENES.includes(state)); }
+  function clearTouchState() {   // 터치 상태 완전 초기화(고정 버그 방지)
+    for (const k in activeTouches) delete activeTouches[k];
+    touchHeld = {}; touchEdge = {}; prevTouchHeld = {};
+  }
   if (mobileMode) {
     const onTouch = (e) => {
+      // 손가락을 뗀/취소된 터치는 상태와 무관하게 항상 제거(떼었는데 고정되는 버그 방지)
+      if (e.type === 'touchend' || e.type === 'touchcancel') {
+        for (const t of e.changedTouches) delete activeTouches[t.identifier];
+        recomputeTouchHeld();
+        return;
+      }
       if (!touchControlsActive()) return;   // 메뉴 등은 기본 동작(클릭) 허용
       e.preventDefault();
-      for (const t of e.changedTouches) {
-        if (e.type === 'touchend' || e.type === 'touchcancel') delete activeTouches[t.identifier];
-        else activeTouches[t.identifier] = touchPos(t);
-      }
+      for (const t of e.changedTouches) activeTouches[t.identifier] = touchPos(t);
       recomputeTouchHeld();
     };
     cv.addEventListener('touchstart', onTouch, { passive: false });
@@ -341,6 +348,7 @@
     shakeAmt = 0;
     hitStop = 0;
     hitFlash = 0;
+    if (mobileMode) clearTouchState();   // 재시작 시 조이스틱/버튼 고정 방지
   }
 
   // ---------- 유틸 ----------
