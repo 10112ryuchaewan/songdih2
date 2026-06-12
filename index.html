@@ -3807,22 +3807,29 @@
     if (!laser) return null;
     return { x: laser.dir>0 ? player.x+player.w : 0, y: laser.y, w: laser.dir>0 ? W-(player.x+player.w) : player.x, h: laser.h };
   }
+  // 근접 타격 반동(넉백/포고) — 졸개·분신 타격에도 적용
+  function byeongMeleeReact() {
+    player.meleeHit = true; hitStop = 3; player.sx = 0.8; player.sy = 1.2;
+    if (player.meleeDir === 'down') player.vy = -8;                         // 포고(아래공격 시 위로 튕김)
+    else if (player.meleeDir === 'up') player.vy = Math.max(player.vy, 4);  // 위공격 시 아래로
+    else player.kbx = -player.facing * 4.5;                                 // 옆공격 넉백
+  }
   function applyPlayerHitsToByeong() {
     const mrect = (!player.meleeHit) ? playerMeleeRect() : null;
     const lrect = laserBeamRect();
-    // 졸개 피해
+    // 졸개 피해 (특수게이지 안 오름)
     for (const m of byMinions) {
       let dmg = 0, consume = false;
       if (mrect && rectsOverlap(mrect, m)) { dmg += player.meleeDmg; consume = true; }
       if (player.dashTimer>0 && player.dashDmg>0 && !player.dashHitDone && rectsOverlap(player, m)) { dmg += player.dashDmg; player.dashHitDone = true; }
       if (lrect && rectsOverlap(lrect, m)) dmg += 0.5;
       if (dmg > 0) {
-        m.hp -= dmg; m.flash = 6; spawnParticles(m.x+m.w/2, m.y+m.h/2, '#fff', 6, 5); gainSpecial();
-        if (consume) { player.meleeHit = true; hitStop = 3; shakeAmt = Math.max(shakeAmt, 7); }
+        m.hp -= dmg; m.flash = 6; spawnParticles(m.x+m.w/2, m.y+m.h/2, '#fff', 6, 5);
+        if (consume) { byeongMeleeReact(); shakeAmt = Math.max(shakeAmt, 7); }
       }
     }
     byMinions = byMinions.filter(m => m.hp > 0);
-    // 분신 피해
+    // 분신 피해 (특수게이지 안 오름)
     for (const c of byClones) {
       let dmg = 0, consume = false;
       if (mrect && rectsOverlap(mrect, c)) { dmg += player.meleeDmg; consume = true; }
@@ -3830,7 +3837,7 @@
       if (lrect && rectsOverlap(lrect, c)) dmg += 0.5;
       if (dmg > 0) {
         c.flash = 6; spawnParticles(c.x+c.w/2, c.y+c.h/2, '#fff', 8, 5);
-        if (consume) { player.meleeHit = true; hitStop = 3; shakeAmt = Math.max(shakeAmt, 8); }
+        if (consume) { byeongMeleeReact(); shakeAmt = Math.max(shakeAmt, 8); }
         if (c.isMain) {
           boss.x = clamp(c.x, 40, W - boss.w - 40); boss.y = GROUND_Y - boss.h; boss.visible = true;
           damageBoss(dmg);
@@ -3839,7 +3846,7 @@
           return;
         } else {
           if (!c.active) { c.active = true; popText(c.x+c.w/2, c.y-10, '!', '#ff6b8e'); }
-          c.hp -= dmg; gainSpecial();
+          c.hp -= dmg;
         }
       }
     }
@@ -3882,37 +3889,28 @@
 
   // ----- 병현 그리기 -----
   // 사람 형태 캐릭터 (발끝 footY 기준). clothes=옷색.
-  function drawByeongFigure(cx, footY, scale, clothes, flash, facing, name, nameColor) {
-    const bodyW = 42*scale, bodyH = 46*scale, headR = 15*scale, legH = 22*scale, legW = 11*scale, armW = 8*scale;
-    const bodyTop = footY - legH - bodyH;
-    const headY = bodyTop - headR + 3*scale;
-    const outline = '#2a1620';
+  // 사각 몸통 + 원형 머리 (플레이어/기존 보스와 동일한 그림체)
+  function drawByeongFigure(cx, footY, w, h, clothes, flash, facing, name, nameColor) {
+    const top = footY - h;
+    const headR = w * 0.36;
+    const headCy = top + headR;
+    const bodyTop = headCy + headR * 0.5;
     ctx.save();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = outline; ctx.lineJoin = 'round';
-    const cloth = flash > 0 ? '#fff' : clothes;
-    const skin = flash > 0 ? '#fff' : '#ffd0a8';
-    // 다리
-    ctx.fillStyle = flash > 0 ? '#fff' : '#3c3550';
-    for (const sgn of [-1, 1]) { const lx = cx + sgn*bodyW*0.26 - legW/2; ctx.fillRect(lx, footY-legH, legW, legH); ctx.strokeRect(lx, footY-legH, legW, legH); }
-    // 팔
-    ctx.fillStyle = cloth;
-    for (const sgn of [-1, 1]) { const ax = sgn < 0 ? cx-bodyW/2-armW : cx+bodyW/2; ctx.fillRect(ax, bodyTop+7*scale, armW, bodyH*0.62); ctx.strokeRect(ax, bodyTop+7*scale, armW, bodyH*0.62); }
-    // 손
-    ctx.fillStyle = skin;
-    for (const sgn of [-1, 1]) { const hx = sgn < 0 ? cx-bodyW/2-armW : cx+bodyW/2; ctx.beginPath(); ctx.arc(hx+armW/2, bodyTop+7*scale+bodyH*0.62, armW*0.6, 0, Math.PI*2); ctx.fill(); ctx.stroke(); }
-    // 몸(옷)
-    ctx.fillStyle = cloth; roundRect(cx-bodyW/2, bodyTop, bodyW, bodyH, 7*scale); ctx.fill(); roundRect(cx-bodyW/2, bodyTop, bodyW, bodyH, 7*scale); ctx.stroke();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#13161c';
+    // 몸 (옷)
+    ctx.fillStyle = flash > 0 ? '#fff' : clothes;
+    ctx.fillRect(cx - w/2, bodyTop, w, footY - bodyTop);
+    ctx.strokeRect(cx - w/2, bodyTop, w, footY - bodyTop);
     // 머리
-    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(cx, headY, headR, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-    // 머리카락
-    ctx.fillStyle = flash > 0 ? '#fff' : '#2c2230'; ctx.beginPath(); ctx.arc(cx, headY-1, headR, Math.PI*1.02, Math.PI*1.98); ctx.fill();
+    ctx.fillStyle = flash > 0 ? '#fff' : '#ffe0bd';
+    ctx.beginPath(); ctx.arc(cx, headCy, headR, 0, Math.PI*2); ctx.fill(); ctx.stroke();
     // 눈
-    ctx.fillStyle = '#221'; const ex = headR*0.42, ey = headY + headR*0.1;
-    ctx.beginPath(); ctx.arc(cx-ex+facing*1.5, ey, 2.4*scale, 0, Math.PI*2); ctx.arc(cx+ex+facing*1.5, ey, 2.4*scale, 0, Math.PI*2); ctx.fill();
-    // 입
-    ctx.strokeStyle = '#7a3030'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, headY+headR*0.45, 4*scale, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+    ctx.fillStyle = '#1b2030';
+    const es = Math.max(4, headR * 0.28), eo = headR * 0.4;
+    ctx.fillRect(cx - eo + (facing>0 ? 2 : -es-2), headCy - es/2, es, es);
+    ctx.fillRect(cx + eo - es + (facing>0 ? 2 : -es-2), headCy - es/2, es, es);
     ctx.restore();
-    if (name) { ctx.fillStyle = nameColor || '#ffd24a'; ctx.font = 'bold 15px "Trebuchet MS"'; ctx.textAlign = 'center'; ctx.fillText(name, cx, headY - headR - 8); ctx.textAlign = 'left'; }
+    if (name) { ctx.fillStyle = nameColor || '#ffd24a'; ctx.font = 'bold 15px "Trebuchet MS"'; ctx.textAlign = 'center'; ctx.fillText(name, cx, top - 8); ctx.textAlign = 'left'; }
   }
   function drawBossByeong() {
     const b = boss;
@@ -3921,7 +3919,7 @@
     const sq = b.squish || 1, st = b.stretch || 1;
     ctx.save();
     ctx.translate(cx, footY); ctx.scale(st/Math.sqrt(sq), sq/Math.sqrt(st)); ctx.translate(-cx, -footY);   // 부풀기/늘어짐
-    drawByeongFigure(cx, footY, 1.5, b.flash > 0 ? '#fff' : '#c86fa0', b.flash, b.facing, null);
+    drawByeongFigure(cx, footY, b.w, b.h, b.flash > 0 ? '#fff' : '#c86fa0', b.flash, b.facing, null);
     ctx.restore();
     ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 16px "Trebuchet MS"'; ctx.textAlign = 'center';
     ctx.fillText('병현', cx, b.y - 14); ctx.textAlign = 'left';
@@ -3950,7 +3948,7 @@
     for (const c of byClones) {
       const facing = (player.x+player.w/2 < c.x+c.w/2) ? -1 : 1;
       ctx.globalAlpha = c.active ? 1 : 0.92;
-      drawByeongFigure(c.x + c.w/2, c.y + c.h, 1.4, c.flash > 0 ? '#fff' : (c.active ? '#c86fa0' : '#8f6a82'), c.flash, facing, c.name, c.active ? '#ff6b8e' : '#ffd24a');
+      drawByeongFigure(c.x + c.w/2, c.y + c.h, c.w, c.h, c.flash > 0 ? '#fff' : (c.active ? '#c86fa0' : '#8f6a82'), c.flash, facing, c.name, c.active ? '#ff6b8e' : '#ffd24a');
       ctx.globalAlpha = 1;
       if (c.active) { ctx.fillStyle = '#3a0008'; ctx.fillRect(c.x, c.y+c.h+4, c.w, 4); ctx.fillStyle = '#ff5b6e'; ctx.fillRect(c.x, c.y+c.h+4, c.w*clamp(c.hp/c.maxHp,0,1), 4); }
     }
