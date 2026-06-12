@@ -29,6 +29,16 @@
     border: 8px solid #9c6b3a;
     border-radius: 8px;
     box-shadow: 0 14px 44px rgba(0,0,0,0.55), inset 0 0 0 2px #6e4523;
+    max-width: 100vw;
+    max-height: 100vh;
+    height: auto;
+    touch-action: none;            /* 터치 스크롤/줌 방지 */
+  }
+  /* 모바일: 캔버스를 화면 가로폭에 맞춤 */
+  @media (pointer: coarse), (max-width: 900px) {
+    #wrap { justify-content: flex-start; }
+    canvas { width: 100vw; border-width: 0; border-radius: 0; }
+    #hint { display: none; }
   }
   #hint {
     margin-top: 12px;
@@ -76,8 +86,61 @@
     2: { left:['a'], right:['d'], down:['s'], up:['w'], jump:[' '], melee:['enter'], dash:['shift'], special:['e'] },
   };
   let controlScheme = 1;
-  function actHeld(a) { return CONTROLS[controlScheme][a].some(k => keys[k]); }
-  function actPressed(a) { return CONTROLS[controlScheme][a].some(k => pressed[k]); }
+  function actHeld(a) { return !!touchHeld[a] || CONTROLS[controlScheme][a].some(k => keys[k]); }
+  function actPressed(a) { return !!touchEdge[a] || CONTROLS[controlScheme][a].some(k => pressed[k]); }
+
+  // ---------- 모바일 터치(조이스틱) 컨트롤 ----------
+  const mobileMode = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  let touchHeld = {};            // 액션 -> 눌림(유지)
+  let touchEdge = {};            // 액션 -> 이번 프레임 새로 눌림
+  let prevTouchHeld = {};
+  const activeTouches = {};      // id -> {x, y}
+  // 컨트롤 배치(캔버스 좌표 960x540)
+  const TC = {
+    dpad: { cx: 130, cy: 405, R: 86, dead: 22 },
+    melee:   { cx: 812, cy: 458, r: 44, label: '공격', col: '#4ec5f1' },
+    jump:    { cx: 908, cy: 458, r: 44, label: '점프', col: '#7ab86a' },
+    dash:    { cx: 812, cy: 360, r: 28, label: '대쉬', col: '#7fe3ff' },
+    special: { cx: 908, cy: 360, r: 28, label: '특수', col: '#b072ff' },
+  };
+  function touchPos(t) {
+    const rect = cv.getBoundingClientRect();
+    return { x: (t.clientX - rect.left) * (W / rect.width), y: (t.clientY - rect.top) * (H / rect.height) };
+  }
+  function inCircle(x, y, c) { return Math.hypot(x - c.cx, y - c.cy) < c.r; }
+  function applyTouchPoint(x, y, h) {
+    if (inCircle(x, y, TC.melee)) h.melee = true;
+    if (inCircle(x, y, TC.jump)) h.jump = true;
+    if (inCircle(x, y, TC.dash)) h.dash = true;
+    if (inCircle(x, y, TC.special)) h.special = true;
+    const dx = x - TC.dpad.cx, dy = y - TC.dpad.cy;
+    if (Math.hypot(dx, dy) < TC.dpad.R + 24) {     // 십자 조이스틱(대각 허용)
+      if (dx < -TC.dpad.dead) h.left = true; else if (dx > TC.dpad.dead) h.right = true;
+      if (dy < -TC.dpad.dead) h.up = true; else if (dy > TC.dpad.dead) h.down = true;
+    }
+  }
+  function recomputeTouchHeld() {
+    const h = {};
+    for (const id in activeTouches) { const t = activeTouches[id]; applyTouchPoint(t.x, t.y, h); }
+    touchHeld = h;
+  }
+  // 게임플레이 중에만 터치 컨트롤 사용(메뉴/상점은 탭=클릭)
+  function touchControlsActive() { return mobileMode && (state === 'PLAY' || CUTSCENES.includes(state)); }
+  if (mobileMode) {
+    const onTouch = (e) => {
+      if (!touchControlsActive()) return;   // 메뉴 등은 기본 동작(클릭) 허용
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (e.type === 'touchend' || e.type === 'touchcancel') delete activeTouches[t.identifier];
+        else activeTouches[t.identifier] = touchPos(t);
+      }
+      recomputeTouchHeld();
+    };
+    cv.addEventListener('touchstart', onTouch, { passive: false });
+    cv.addEventListener('touchmove', onTouch, { passive: false });
+    cv.addEventListener('touchend', onTouch, { passive: false });
+    cv.addEventListener('touchcancel', onTouch, { passive: false });
+  }
 
   // ---------- 로그인 / 상점 / 도구 ----------
   const ITEMS = {
@@ -1610,11 +1673,12 @@
       ctx.fillStyle = '#fff'; ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
       ctx.fillText('🎒 도구 칸 추가', r.x + 20, r.y + 26);
       ctx.fillStyle = '#aab4d4'; ctx.font = '13px "Trebuchet MS", sans-serif';
-      ctx.fillText('장착 칸 +1  (현재 ' + profile.slots + '칸)', r.x + 20, r.y + 46);
+      const maxed = profile.slots >= 9;
+      ctx.fillText('장착 칸 +1  (현재 ' + profile.slots + '칸 / 최대 9칸)', r.x + 20, r.y + 46);
       ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 16px "Trebuchet MS", sans-serif'; ctx.textAlign = 'right';
-      ctx.fillText(profile.slotCost + ' G', r.x + r.w - 122, r.y + 34);
-      const canS = currentUser && profile.gold >= profile.slotCost;
-      drawPlainButton(shopBuyRect(slotRowIndex()), '구매', canS ? '#2f7a3a' : '#555');
+      ctx.fillText(maxed ? 'MAX' : (profile.slotCost + ' G'), r.x + r.w - 122, r.y + 34);
+      const canS = currentUser && !maxed && profile.gold >= profile.slotCost;
+      drawPlainButton(shopBuyRect(slotRowIndex()), maxed ? 'MAX' : '구매', canS ? '#2f7a3a' : '#555');
     }
     ctx.restore();   // 클리핑 해제
     if (!currentUser) { ctx.textAlign = 'center'; ctx.fillStyle = '#ff9a9a'; ctx.font = '14px "Trebuchet MS"'; ctx.fillText('구매하려면 로그인하세요', W/2, H - 24); }
@@ -1828,8 +1892,8 @@
           return;
         }
       }
-      if (inRect(mx, my, shopBuyRect(slotRowIndex()))) {   // 칸 추가
-        if (currentUser && profile.gold >= profile.slotCost) {
+      if (inRect(mx, my, shopBuyRect(slotRowIndex()))) {   // 칸 추가 (최대 9칸)
+        if (currentUser && profile.slots < 9 && profile.gold >= profile.slotCost) {
           profile.gold -= profile.slotCost;
           profile.slots += 1;
           profile.slotCost *= 2;   // 살 때마다 2배
@@ -2324,7 +2388,7 @@
       case 'p2_fire': {                // 0.5초 간격 3발
         boss.subTimer--;
         if (boss.subTimer <= 0 && boss.sub < 3) {
-          for (const off of [-0.7, -0.35, 0, 0.35, 0.7]) fireLyricBullet(off);   // 한 번에 5개(넓은 간격)
+          for (const off of [-0.5, 0, 0.5]) fireLyricBullet(off);   // 한 번에 3개
           boss.sub++; boss.subTimer = 30; shakeAmt = Math.max(shakeAmt, 7);
         }
         if (boss.sub >= 3 && boss.subTimer <= 0) { boss.micScale = 1; boss.state = 'stand'; boss.timer = 130; }
@@ -3447,7 +3511,7 @@
     frame++;
     // 컷씬 스킵: 스페이스 1초 홀드
     if (CUTSCENES.includes(state)) {
-      if (keys[' ']) { skipHold++; if (skipHold >= 60) { skipHold = 0; skipCutscene(); } }
+      if (keys[' '] || touchHeld.jump) { skipHold++; if (skipHold >= 60) { skipHold = 0; skipCutscene(); } }
       else skipHold = 0;
     } else skipHold = 0;
     // 화면 흔들림 감쇠 (고정 속도)
@@ -3572,6 +3636,40 @@
       drawEnd(state === 'WIN');
     }
     if (CUTSCENES.includes(state)) drawSkipHint();
+    if (touchControlsActive()) drawTouchControls();
+  }
+
+  // 모바일 온스크린 컨트롤 그리기
+  function drawTouchControls() {
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    // 십자 조이스틱
+    const d = TC.dpad;
+    ctx.fillStyle = 'rgba(20,22,30,0.32)'; ctx.beginPath(); ctx.arc(d.cx, d.cy, d.R, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3;
+    const arm = d.R*0.62, tw = 18;
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillRect(d.cx-tw, d.cy-arm, tw*2, arm*2);
+    ctx.fillRect(d.cx-arm, d.cy-tw, arm*2, tw*2);
+    // 방향 화살표 강조(눌린 방향)
+    ctx.fillStyle = '#ffd24a';
+    const ar = 14;
+    if (touchHeld.left)  { ctx.beginPath(); ctx.moveTo(d.cx-arm, d.cy); ctx.lineTo(d.cx-arm+ar, d.cy-ar); ctx.lineTo(d.cx-arm+ar, d.cy+ar); ctx.fill(); }
+    if (touchHeld.right) { ctx.beginPath(); ctx.moveTo(d.cx+arm, d.cy); ctx.lineTo(d.cx+arm-ar, d.cy-ar); ctx.lineTo(d.cx+arm-ar, d.cy+ar); ctx.fill(); }
+    if (touchHeld.up)    { ctx.beginPath(); ctx.moveTo(d.cx, d.cy-arm); ctx.lineTo(d.cx-ar, d.cy-arm+ar); ctx.lineTo(d.cx+ar, d.cy-arm+ar); ctx.fill(); }
+    if (touchHeld.down)  { ctx.beginPath(); ctx.moveTo(d.cx, d.cy+arm); ctx.lineTo(d.cx-ar, d.cy+arm-ar); ctx.lineTo(d.cx+ar, d.cy+arm-ar); ctx.fill(); }
+    // 액션 버튼
+    for (const key of ['melee', 'jump', 'dash', 'special']) {
+      const b = TC[key];
+      ctx.fillStyle = touchHeld[key] ? b.col : 'rgba(20,22,30,0.35)';
+      ctx.beginPath(); ctx.arc(b.cx, b.cy, b.r, 0, Math.PI*2); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = b.col; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+      ctx.font = 'bold ' + Math.round(b.r*0.5) + 'px "Trebuchet MS", sans-serif';
+      ctx.fillText(b.label, b.cx, b.cy + b.r*0.18);
+    }
+    ctx.textAlign = 'left';
+    ctx.restore();
   }
 
   // ---------- 보스 클리어 강화 선택 ----------
@@ -3582,8 +3680,8 @@
   ];
   function startUpgrade() {
     addGold(stage === 1 ? 200 : stage === 2 ? 500 : stage === 3 ? 900 : 1500);   // 보스 클리어 골드
-    upgrade = { next: (stage < 4) ? 'TRANSITION' : 'WIN' };
-    state = 'UPGRADE';
+    upgrade = null;
+    state = (stage < 4) ? 'TRANSITION' : 'WIN';   // 강화 선택 없이 바로 다음 단계
   }
   function cardRect(i) { const cw = 240, gap = 24, total = cw*3 + gap*2; const x0 = (W - total)/2; return { x: x0 + i*(cw+gap), y: 230, w: cw, h: 180 }; }
   function applyUpgrade(i) {
@@ -3931,8 +4029,8 @@
     if (boss.phase2) {
       boss.rainTimer = (boss.rainTimer || 0) - 1;
       if (boss.rainTimer <= 0) {
-        for (let i = 0; i < 2; i++) byRain.push({ x: rand(10, W-10), y: -12, vy: rand(7, 10) });
-        boss.rainTimer = 60;   // 1초마다
+        for (let i = 0; i < 3; i++) byRain.push({ x: rand(10, W-10), y: -12, vy: rand(7, 10) });
+        boss.rainTimer = 45;   // 0.75초마다
       }
     }
     for (const r of byRain) {
@@ -4056,10 +4154,14 @@
   function loop(now) {
     acc += now - lastT; lastT = now;
     if (acc > 200) acc = 200;          // 탭 전환 등 큰 갭 방지
+    // 터치 엣지(새로 눌림) 계산
+    touchEdge = {};
+    for (const a in touchHeld) if (touchHeld[a] && !prevTouchHeld[a]) touchEdge[a] = true;
+    prevTouchHeld = Object.assign({}, touchHeld);
     let ran = 0;
     while (acc >= FIXED_DT && ran < 5) {
       stepGame();
-      if (ran === 0) { for (const k in pressed) pressed[k] = false; }  // 엣지 입력은 1회만 소비
+      if (ran === 0) { for (const k in pressed) pressed[k] = false; touchEdge = {}; }  // 엣지 입력은 1회만 소비
       acc -= FIXED_DT; ran++;
     }
     renderGame();
