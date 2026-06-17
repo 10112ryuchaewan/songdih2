@@ -3816,7 +3816,7 @@
 
   // ========== 스테이지 5 : K.K.H (김기흥) ==========
   const KKH_CY = 246;            // 회전 필드 중심 y
-  const KKH_ORBIT = 168;         // 외곽 플랫폼 궤도 반경
+  const KKH_ORBIT = 202;         // 외곽 플랫폼 궤도 반경(플랫폼 간격 ↑)
   function updateKkhPlatforms() {
     const cx = W/2, cy = KKH_CY, R = KKH_ORBIT, outW = 116, ctrW = 152;
     platforms = [{ x: cx - ctrW/2, y: cy - 8, w: ctrW }];   // 0: 중심 플랫폼
@@ -3831,15 +3831,15 @@
     const iy = KKH_CY + Math.sin(boss.infT * 2) * 92;
     return { x: ix - boss.w/2, y: iy - boss.h/2 };
   }
-  function genKkhPath() {   // 좌→우(또는 우→좌) 위아래 지그재그, 굴곡 많이
+  function genKkhPath() {   // 좌→우(또는 우→좌), 위아래는 벗어나지 않는 랜덤 굴곡
     const rightward = Math.random() < 0.5;
-    const n = 8;            // 구간 수(굴곡 ↑)
-    const hi = 120, lo = 404, startLow = Math.random() < 0.5;
+    const n = 8;            // 구간 수
+    const hi = 120, lo = 410;   // 세로 범위(이 밖으로 안 나감)
     const path = [];
     for (let i = 0; i <= n; i++) {
       const fx = i / n;
       const x = rightward ? (-50 + fx*(W+100)) : (W+50 - fx*(W+100));
-      path.push({ x, y: ((i % 2 === 0) === startLow) ? lo : hi });
+      path.push({ x, y: rand(hi, lo) });   // 매 지점 랜덤 높이
     }
     return path;
   }
@@ -3850,7 +3850,7 @@
     boss.state = 'p1_path'; boss.timer = ph2 ? 18 : 60;   // 점선 유지: 0.3초 / 1초
   }
   function startKkhPattern() {
-    const idx = boss.patternIdx % 3; boss.patternIdx++;
+    const idx = Math.floor(Math.random() * 3);   // 패턴 랜덤(순서 X)
     boss.kkhForm = 'normal'; boss.visible = true;
     if (idx === 0)      { boss.state = 'p1_vanish'; boss.timer = 46; boss.dashCount = 0; }
     else if (idx === 1) { boss.state = 'p2_pause';  boss.timer = 40; boss.throwCount = 0; }
@@ -3858,9 +3858,10 @@
   }
   function spawnKkhGears(n) {
     const ox = boss.x + boss.w/2, oy = boss.y + boss.h/2;
+    const gr = boss.phase2 ? 34 : 42;   // 2페이즈(강화) 톱니는 조금 작게
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? 0 : (i/(n-1) - 0.5);      // -0.5 ~ 0.5
-      kkhProjs.push({ x: ox, y: oy, vx: t * 9.5, vy: -15.5 - Math.random()*3, rot: rand(0, 6.28), av: rand(-0.22, 0.22), r: 42, life: 260, hit: false });
+      kkhProjs.push({ x: ox, y: oy, vx: t * 9.5, vy: -15.5 - Math.random()*3, rot: rand(0, 6.28), av: rand(-0.22, 0.22), r: gr, life: 260, hit: false });
     }
     shakeAmt = Math.max(shakeAmt, 7);
   }
@@ -3976,7 +3977,7 @@
     byMinions=[]; byClones=[]; byShots=[]; byRain=[];
     boss = {
       type: 'kkh', x: W/2 - 35, y: 120, w: 70, h: 70,
-      hp: 1500, maxHp: 1500, state: 'idle', timer: 120,
+      hp: 1300, maxHp: 1300, state: 'idle', timer: 120,
       facing: -1, flash: 0, phase2: false, visible: true, kkhForm: 'normal',
       infT: 0, patternIdx: 0, path: null, dashSeg: 0, dashCount: 0, throwCount: 0,
     };
@@ -4242,10 +4243,10 @@
     byMinions=[]; byClones=[]; byShots=[]; byRain=[];
     boss = {
       type: 'byeong', x: 720, y: GROUND_Y - 120, w: 64, h: 120,
-      hp: 1200, maxHp: 1200, state: 'idle', timer: 120,
+      hp: 1000, maxHp: 1000, state: 'idle', timer: 120,
       flash: 0, bob: 0, facing: -1, stun: 0,
       summonTimer: 180, patternIdx: 0, visible: true, squish: 1, stretch: 1,
-      nextSummonHp: 1100, phase2: false,   // 100마다 소환 / 600 이하 lonely 강화
+      nextSummonHp: 900, phase2: false,   // 100마다 소환 / 600 이하 lonely 강화
     };
     startIntro4();
   }
